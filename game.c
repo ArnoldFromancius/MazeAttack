@@ -174,7 +174,7 @@ int main(){
 				level=0;
 			}
 			else if(level==100){
-				enemy_speed-=5;
+				enemy_speed-=10;
 				bullet_speed=5;
 				enemy_update_freq-=25;
 				grenade_count=3;
@@ -187,33 +187,42 @@ int main(){
 		 		bullet_speed=12;
  				grenade_speed=60;
 				enemy_update_freq=350;
-				grenade_count=5;
+				grenade_count=3;
 				heat+=1;
 				level=0;
 			}
 			else if(level==175){
 				enemy_speed-=10;
 				bullet_speed=10;
-				enemy_update_freq-=50;
-				grenade_count=5;
+				enemy_bullet_speed=9;
+				enemy_update_freq-=150;
+				grenade_count=3;
 				firing_factor=500;
 				level=0;
 			}
 			else if(level==200){
-				enemy_speed-=5;
+				enemy_speed-=10;
 				bullet_speed=7;
 				enemy_update_freq-=50;
 				grenade_count=5;
-				firing_factor=300;
+				firing_factor=450;
 				level=0;
 			}else if(level==250){
-				enemy_speed=30;
+				enemy_speed=40;
 				bullet_speed=12;
-				enemy_bullet_speed=35;
+				enemy_bullet_speed=80;
 				enemy_update_freq=350;
-				grenade_count=9;
+				grenade_count=5;
 				firing_factor=1500;
 				heat_seeker_active=1;
+				level=0;
+			}else if(level==275){
+				enemy_speed-=15;
+				bullet_speed=9;
+				enemy_bullet_speed=50;
+				enemy_update_freq=-150;
+				grenade_count=5;
+				firing_factor=1500;
 				level=0;
 			}
 			
@@ -444,8 +453,14 @@ void plot_enemy_fire(CHAR_INFO *mirror_screen){
 	int i=0;
 	while(i<MAX_ENEMY_BULLETS){
 		if(enemy_fire[i]!=NULL){
-			mirror_screen[enemy_fire[i]->pos].Char.AsciiChar='*';
-			mirror_screen[enemy_fire[i]->pos].Attributes=FOREGROUND_BLUE|BACKGROUND_RED|BACKGROUND_GREEN|BACKGROUND_INTENSITY;
+			if(heat_seeker_active==1){
+				mirror_screen[enemy_fire[i]->pos].Char.AsciiChar='*';
+				mirror_screen[enemy_fire[i]->pos].Attributes=FOREGROUND_RED|FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_BLUE|BACKGROUND_INTENSITY;
+			}
+			else{
+				mirror_screen[enemy_fire[i]->pos].Char.AsciiChar='*';
+				mirror_screen[enemy_fire[i]->pos].Attributes=FOREGROUND_BLUE|BACKGROUND_RED|BACKGROUND_GREEN|BACKGROUND_INTENSITY;
+			}
 		}
 		i++;
 	}	
@@ -821,6 +836,10 @@ void compute_score(int *s, char *hiscore){
 		level=175;
 	else if(tmp==200)
 		level=200;
+    else if(tmp==250)
+		level=250;
+	else if(tmp==275)
+		level=275;
 	//now to continue with our function
 	
 	int temp[4];
