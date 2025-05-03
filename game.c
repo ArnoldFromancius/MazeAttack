@@ -1,4 +1,4 @@
-/*	TITLE: MAZE GUNNER.
+/*	TITLE: MAZE ATTACK.
 	AUTHOR: ARNOLD FROMANCIUS.
 	
 	DATE: 23/08/2020.
@@ -946,38 +946,38 @@ void loading(CHAR_INFO *mirror_screen){
 		mirror_screen[i+11].Attributes=FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		
-		mirror_screen[i+12].Char.AsciiChar='G';
+		mirror_screen[i+12].Char.AsciiChar='A';
 		mirror_screen[i+12].Attributes=FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		mirror_screen[i+13].Char.AsciiChar=' ';
 		mirror_screen[i+13].Attributes=FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		
-		mirror_screen[i+14].Char.AsciiChar='U';
+		mirror_screen[i+14].Char.AsciiChar='T';
 		mirror_screen[i+14].Attributes=FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		mirror_screen[i+15].Char.AsciiChar=' ';
 		mirror_screen[i+15].Attributes=FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
-		mirror_screen[i+16].Char.AsciiChar='N';
+		mirror_screen[i+16].Char.AsciiChar='T';
 		mirror_screen[i+16].Attributes=FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		mirror_screen[i+17].Char.AsciiChar=' ';
 		mirror_screen[i+17].Attributes=FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
-		mirror_screen[i+18].Char.AsciiChar='N';
+		mirror_screen[i+18].Char.AsciiChar='A';
 		mirror_screen[i+18].Attributes=FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		mirror_screen[i+19].Char.AsciiChar=' ';
 		mirror_screen[i+19].Attributes=FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
-		mirror_screen[i+20].Char.AsciiChar='E';
+		mirror_screen[i+20].Char.AsciiChar='C';
 		mirror_screen[i+20].Attributes=FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		mirror_screen[i+21].Char.AsciiChar=' ';
 		mirror_screen[i+21].Attributes=FOREGROUND_GREEN|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
-		mirror_screen[i+22].Char.AsciiChar='R';
+		mirror_screen[i+22].Char.AsciiChar='K';
 		mirror_screen[i+22].Attributes=FOREGROUND_GREEN|FOREGROUND_BLUE|FOREGROUND_INTENSITY|BACKGROUND_RED|BACKGROUND_BLUE;
 		
 		
