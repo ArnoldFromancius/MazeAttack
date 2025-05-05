@@ -3,13 +3,15 @@
 MazeAttack is a simple terminal-based shooting game written in C. Blast your advesaries away before they get to you through a maze. It’s a fun exercise in real-time input, game logic, and terminal rendering — all in under a few hundred lines of C code!
 🕹️ Gameplay
 
-    Explore a randomly generated maze
+    Kill your enemies as they rush towards you
 
-    Avoid dead ends and navigate toward the exit
+    Their speed increases the more you kill them
 
-    Move using arrow keys or WASD controls
+    As levels progresses, different types of enemies 
 
-    Challenge yourself to find the shortest path!
+    Avoid the enemy fire in some levels as they carry guns
+
+    Kill them all before they reach your position.
 
 🧱 Built With
 
