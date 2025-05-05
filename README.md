@@ -7,9 +7,11 @@ MazeAttack is a simple terminal-based shooting game written in C. Blast your adv
 
     Their speed increases the more you kill them
 
-    As levels progresses, different types of enemies 
+    As levels progresses, different types of enemies spawn
 
-    Avoid the enemy fire in some levels as they carry guns
+    Avoid enemy fire in some levels as they carry guns
+
+    When you are shot, your character freezes for 3 secs
 
     Kill them all before they reach your position.
 
