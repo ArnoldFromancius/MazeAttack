@@ -1,7 +1,7 @@
-🧩 MazeAttack
+ MazeAttack
 
 MazeAttack is a simple terminal-based shooting game written in C. Blast your advesaries away before they get to you through a maze. It’s a fun exercise in real-time input, game logic, and terminal rendering — all in under a few hundred lines of C code!
-🕹️ Gameplay
+ Gameplay:
 
     Kill your enemies as they rush towards you
 
@@ -15,11 +15,11 @@ MazeAttack is a simple terminal-based shooting game written in C. Blast your adv
 
     Kill them all before they reach your position.
 
-🧱 Built With
+ Built With:
 
     C (C99 standard)
 
-🚀 How to Run
+ How to Run:
 1. Clone the repository
 
 git clone https://github.com/ArnoldFromancius/MazeAttack
@@ -30,7 +30,7 @@ cd MazeAttack
 gcc -o maze main.c 
 ./maze
 
-🎮 Controls
+ Controls:
 
     LEFT (left), RIGHT (right), UP (shoot), DOWN (grenade) 
 
@@ -38,14 +38,14 @@ gcc -o maze main.c
 
     Q: Quit the game
 
-📁 Files
+ Files:
 
 MazeAttack/
 ├── main.c         # Game logic and rendering
 ├── maze.h         # (Optional) header file for modularity
 └── README.md
 
-🧠 Learning Goals
+ Learning Goals:
 
     Handling real-time keyboard input in C
 
@@ -53,6 +53,6 @@ MazeAttack/
 
     Improving structuring and modularity in C programs
 
-📜 License
+ License:
 
 This project is licensed under the [MIT License](LICENSE). Feel free to play, modify, or build upon it!
