@@ -289,6 +289,7 @@ int poll_input(){
 	int quit=0;
 
 	while(PeekConsoleInput(hin,&rec,1,&count)&&count>0){
+		int pause_key=0;
 		if(!ReadConsoleInput(hin,&rec,1,&count))
 			break;
 		if(rec.EventType!=KEY_EVENT)
@@ -304,7 +305,7 @@ int poll_input(){
 			case 'Q':
 			case 'q':
 			case VK_ESCAPE:	quit=1;			break;
-			default:						break;
+			default : pause_key=getch(); break;	//consume any other keypress
 		}
 		if(quit)
 			break;
