@@ -158,6 +158,15 @@ char Hiscore[4];
 int level;
 int player_pos=2344;	//player's column on the player stage row
 int game_quit=0;		//set when the player presses Q/ESC
+int game_paused=0;	//1 while paused; toggled by any other key
+
+/*	Which keys are physically held down. Windows keeps sending key-down
+	events while a key is held, and those repeats keep arriving after the
+	loading screen is dismissed. Shared between poll_input() and
+	flush_input() so that the key used to dismiss the loading screen is
+	recognised as still held, instead of its first repeat being treated as
+	a fresh press and toggling pause. */
+unsigned char key_is_down[256];
 
 /*	screen state, shared by main and render_frame() */
 HANDLE console_out;
@@ -228,20 +237,28 @@ int main(){
 
 		accumulator+=frame_ms;
 
-		/*	Run whole simulation slices. A fast machine runs 0 or 1 per
-			frame; a slow one runs several to catch up on real time. */
-		int steps=0;
-		while(accumulator>=SIM_DT_MS){
-			step_sim();
-			accumulator-=SIM_DT_MS;
-			steps++;
-			if(gameover==1||game_quit)
-				break;
-		}
-		/*	drop any unconsumed backlog rather than snowballing into an
-			unbounded number of catch-up steps next frame */
-		if(steps>=MAX_STEPS_PER_FRAME)
+		/*	Paused: skip the simulation and drop the elapsed time, so
+			resuming does not fast-forward through the pause. Rendering
+			still runs, further below. */
+		if(game_paused){
 			accumulator=0.0;
+		}
+		else{
+			/*	Run whole simulation slices. A fast machine runs 0 or 1 per
+				frame; a slow one runs several to catch up on real time. */
+			int steps=0;
+			while(accumulator>=SIM_DT_MS){
+				step_sim();
+				accumulator-=SIM_DT_MS;
+				steps++;
+				if(gameover==1||game_quit)
+					break;
+			}
+			/*	drop any unconsumed backlog rather than snowballing into an
+				unbounded number of catch-up steps next frame */
+			if(steps>=MAX_STEPS_PER_FRAME)
+				accumulator=0.0;
+		}
 
 		/*	Render once per frame, outside the simulation loop, so the
 			frame rate stays free while game speed stays fixed. */
@@ -289,13 +306,17 @@ int poll_input(){
 	int quit=0;
 
 	while(PeekConsoleInput(hin,&rec,1,&count)&&count>0){
-		int pause_key=0;
 		if(!ReadConsoleInput(hin,&rec,1,&count))
 			break;
 		if(rec.EventType!=KEY_EVENT)
 			continue;			//ignore mouse and resize events
-		if(!rec.Event.KeyEvent.bKeyDown)
-			continue;			//ignore key releases
+
+		int vk=(int)(rec.Event.KeyEvent.wVirtualKeyCode&0xFF);
+
+		if(!rec.Event.KeyEvent.bKeyDown){
+			key_is_down[vk]=0;	//released
+			continue;
+		}
 
 		switch(rec.Event.KeyEvent.wVirtualKeyCode){
 			case VK_UP:		handle_key(UP);		break;
@@ -305,7 +326,13 @@ int poll_input(){
 			case 'Q':
 			case 'q':
 			case VK_ESCAPE:	quit=1;			break;
-			default : pause_key=getch(); break;	//consume any other keypress
+			default:
+			//any other key toggles pause, once per real press
+			if(!key_is_down[vk]){
+				key_is_down[vk]=1;
+				game_paused=!game_paused;
+			}
+			break;
 		}
 		if(quit)
 			break;
@@ -320,21 +347,35 @@ void wait_any_key(){
 	for(;;){
 		if(PeekConsoleInput(GetStdHandle(STD_INPUT_HANDLE),&rec,1,&count)&&count>0){
 			if(ReadConsoleInput(GetStdHandle(STD_INPUT_HANDLE),&rec,1,&count)
-				&&rec.EventType==KEY_EVENT&&rec.Event.KeyEvent.bKeyDown)
+				&&rec.EventType==KEY_EVENT&&rec.Event.KeyEvent.bKeyDown){
+				/*	record it as held: the key that dismisses the loading
+					screen may still be down, and its auto-repeat events
+					must not be seen as a fresh press */
+				key_is_down[rec.Event.KeyEvent.wVirtualKeyCode&0xFF]=1;
 				return;
+			}
 		}
 		Sleep(10);
 	}
 }
 
-/*	discards keys typed before play began, so presses made on the loading
-	screen do not leak into the first frame of the game */
+/*	Discards keys typed before play began, so presses made on the loading
+	screen do not leak into the first frame of the game.
+
+		Each discarded event still updates key_is_down[], so a key that was
+		held when the loading screen was dismissed stays marked as held.
+		Without this, the next auto-repeat event for that key would look
+		like a fresh press and toggle pause on the first frame. */
 void flush_input(){
 	INPUT_RECORD rec;
 	DWORD count=0;
 	while(PeekConsoleInput(GetStdHandle(STD_INPUT_HANDLE),&rec,1,&count)&&count>0){
 		if(!ReadConsoleInput(GetStdHandle(STD_INPUT_HANDLE),&rec,1,&count))
 			break;
+		if(rec.EventType!=KEY_EVENT)
+			continue;
+		key_is_down[rec.Event.KeyEvent.wVirtualKeyCode&0xFF]=
+			rec.Event.KeyEvent.bKeyDown?1:0;
 	}
 }
 
@@ -513,6 +554,47 @@ void step_sim(){
 	}
 }
 
+/*	Draws the pause banner, over the last rendered frame.
+
+		Two rows are used: on a single row the longer second line would
+		overwrite the first, since both are centred on the same field. */
+void plot_pause(CHAR_INFO *mirror_screen){
+	const WORD a=FOREGROUND_RED|FOREGROUND_GREEN|FOREGROUND_INTENSITY;
+	//"PAUSED" is 6 chars, centred in 70 columns: (70-6)/2 = 32
+	int i=16*70+32;
+	mirror_screen[i].Char.AsciiChar='P';	mirror_screen[i].Attributes=a;
+	mirror_screen[i+1].Char.AsciiChar='A';	mirror_screen[i+1].Attributes=a;
+	mirror_screen[i+2].Char.AsciiChar='U';	mirror_screen[i+2].Attributes=a;
+	mirror_screen[i+3].Char.AsciiChar='S';	mirror_screen[i+3].Attributes=a;
+	mirror_screen[i+4].Char.AsciiChar='E';	mirror_screen[i+4].Attributes=a;
+	mirror_screen[i+5].Char.AsciiChar='D';	mirror_screen[i+5].Attributes=a;
+	//"PRESS ANY KEY TO RESUME" is 23 chars, centred: (70-23)/2 = 23
+	i=18*70+23;
+	mirror_screen[i].Char.AsciiChar='P';	mirror_screen[i].Attributes=a;
+	mirror_screen[i+1].Char.AsciiChar='R';	mirror_screen[i+1].Attributes=a;
+	mirror_screen[i+2].Char.AsciiChar='E';	mirror_screen[i+2].Attributes=a;
+	mirror_screen[i+3].Char.AsciiChar='S';	mirror_screen[i+3].Attributes=a;
+	mirror_screen[i+4].Char.AsciiChar='S';	mirror_screen[i+4].Attributes=a;
+	mirror_screen[i+5].Char.AsciiChar=' ';	mirror_screen[i+5].Attributes=a;
+	mirror_screen[i+6].Char.AsciiChar='A';	mirror_screen[i+6].Attributes=a;
+	mirror_screen[i+7].Char.AsciiChar='N';	mirror_screen[i+7].Attributes=a;
+	mirror_screen[i+8].Char.AsciiChar='Y';	mirror_screen[i+8].Attributes=a;
+	mirror_screen[i+9].Char.AsciiChar=' ';	mirror_screen[i+9].Attributes=a;
+	mirror_screen[i+10].Char.AsciiChar='K';	mirror_screen[i+10].Attributes=a;
+	mirror_screen[i+11].Char.AsciiChar='E';	mirror_screen[i+11].Attributes=a;
+	mirror_screen[i+12].Char.AsciiChar='Y';	mirror_screen[i+12].Attributes=a;
+	mirror_screen[i+13].Char.AsciiChar=' ';	mirror_screen[i+13].Attributes=a;
+	mirror_screen[i+14].Char.AsciiChar='T';	mirror_screen[i+14].Attributes=a;
+	mirror_screen[i+15].Char.AsciiChar='O';	mirror_screen[i+15].Attributes=a;
+	mirror_screen[i+16].Char.AsciiChar=' ';	mirror_screen[i+16].Attributes=a;
+	mirror_screen[i+17].Char.AsciiChar='R';	mirror_screen[i+17].Attributes=a;
+	mirror_screen[i+18].Char.AsciiChar='E';	mirror_screen[i+18].Attributes=a;
+	mirror_screen[i+19].Char.AsciiChar='S';	mirror_screen[i+19].Attributes=a;
+	mirror_screen[i+20].Char.AsciiChar='U';	mirror_screen[i+20].Attributes=a;
+	mirror_screen[i+21].Char.AsciiChar='M';	mirror_screen[i+21].Attributes=a;
+	mirror_screen[i+22].Char.AsciiChar='E';	mirror_screen[i+22].Attributes=a;
+}
+
 /*	Draws one complete frame into the mirror buffer and blits it to the
 	console. Called once per rendered frame, never once per sim step. */
 void render_frame(){
@@ -524,6 +606,8 @@ void render_frame(){
 	plot_bullets(mirror_screen);
 	plot_player(player_pos,mirror_screen);
 	plot_score_board(mirror_screen);
+	if(game_paused)
+		plot_pause(mirror_screen);	//drawn last, on top of the frame
 	draw(&console_out,mirror_screen,&mirror_screen_size,&mirror_screen_pos,&WinSize);
 }
 
