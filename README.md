@@ -42,7 +42,7 @@ gcc -o maze reimplemented_game.c
  Files:
 
 MazeAttack/
-├── main.c         # Game logic and rendering
+├── game.c         # Game logic and rendering
 ├── maze.h         # (Optional) header file for modularity
 └── README.md
 
