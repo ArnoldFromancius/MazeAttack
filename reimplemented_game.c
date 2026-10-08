@@ -15,7 +15,9 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
+#include<stdarg.h>
 #include<windows.h>
+#include<mmsystem.h>	//MCI: background music and sound effects
 #include<conio.h>	//only for the getch() on the hiscore-file error path
 
 /*	All gameplay rates below are expressed in MILLISECONDS, not in loop
@@ -46,6 +48,11 @@
 #define FREEZE_DURATION_MS 3000	//player is immobilised for 3 seconds
 #define MAX_ENEMY_BULLETS 5
 
+/*	Number of aliases in the gunshot pool. Shots reuse a device, so a pool
+	is what lets several sound at once instead of queueing behind each
+	other. Declared up here because the audio state array needs its size. */
+#define SHOT_POOL_SIZE 6
+
 void clear(CHAR_INFO *);	//clears screen and plots game_background on screen
 void draw(HANDLE *h,CHAR_INFO *ms,COORD *mss,COORD *msp,SMALL_RECT *ws);
 void create_enemy_sprite();
@@ -74,6 +81,11 @@ void plot_score_board(CHAR_INFO *);
 void loading();
 void plot_game_over(CHAR_INFO *);
 void plot_pause(CHAR_INFO *);
+int audio_init();			//open audio devices and start the music
+void audio_shutdown();		//close every open audio device
+int audio_play_gunshot();	//play one gunshot from the pool
+int audio_play_explosion();	//play the explosion
+void audio_update_bgm();	//restart the track when it reaches the end
 void compute_score(int *, char *);
 void debug(int *);
 void step_sim();			//one fixed timestep of game logic
@@ -168,6 +180,14 @@ int game_paused=0;	//1 while paused; toggled by any other key
 	a fresh press and toggling pause. */
 unsigned char key_is_down[256];
 
+/*	audio state, see the audio section at the end of this file */
+int audio_available=0;		//1 if any device opened successfully
+int bgm_open=0;			//1 if the background music device is open
+int blast_open=0;		//1 if the explosion device is open
+int shot_open[SHOT_POOL_SIZE];	//per-alias open flags
+int shot_next=0;			//next alias to use, cycled round-robin
+int bgm_playing=0;			//1 while the background track is playing
+
 /*	screen state, shared by main and render_frame() */
 HANDLE console_out;
 CHAR_INFO mirror_screen[70*35];
@@ -181,6 +201,10 @@ int main(){
 	/*	must be set before the first draw(): a file-scope HANDLE starts as
 		NULL, and WriteConsoleOutputA fails silently on a null handle */
 	console_out=GetStdHandle(STD_OUTPUT_HANDLE);
+	/*	seed the RNG once, here. enemy_weapon_computer() used to call
+		srand(time(0)) inside its own retry loop, which re-rolled the same
+		value on every attempt. */
+	srand((unsigned int)time(NULL));
 	//setup window
 	SetConsoleTitle("Maze Gunner...");
 	//setup screen details
@@ -198,6 +222,11 @@ int main(){
 	enemy_weapon_init();
 	create_enemy_sprite();
 	clear(mirror_screen);
+
+	/*	Open the audio devices and start the background music. This is
+		best-effort: if the files are missing the game runs silently rather
+		than refusing to start. */
+	audio_init();
 
 	/*	Fixed timestep loop.
 
@@ -269,9 +298,13 @@ int main(){
 			plot_score_board(mirror_screen);
 			plot_game_over(mirror_screen);
 			draw(&console_out,mirror_screen,&mirror_screen_size,&mirror_screen_pos,&WinSize);
+			audio_shutdown();
 			wait_any_key();
 			exit(0);
 		}
+		/*	restart the background track if it has finished; also the
+			right place to update anything else audio-related each frame */
+		audio_update_bgm();
 		render_frame();
 	}
 
@@ -281,6 +314,7 @@ int main(){
 	plot_score_board(mirror_screen);
 	plot_game_over(mirror_screen);
 	draw(&console_out,mirror_screen,&mirror_screen_size,&mirror_screen_pos,&WinSize);
+	audio_shutdown();	//stop the music before the process goes away
 	wait_any_key();
 	return 0;
 }
@@ -385,8 +419,10 @@ void flush_input(){
 void handle_key(int key){
 	if(key==UP){
 		if(player_state==1){
-			if(no_of_bullets<gun_mode)
+			if(no_of_bullets<gun_mode){
 				create_bullet_sprite(player_pos-70);
+				audio_play_gunshot();	//only when a bullet is really created
+			}
 		}
 	}
 	else if(key==LEFT){
@@ -413,6 +449,7 @@ void handle_key(int key){
 			}
 			else{
 				detonate_grenade();
+				audio_play_explosion();
 			}
 		}
 	}
@@ -621,16 +658,21 @@ void player_hit(){
 void enemy_weapon_fire(int pos){
 		int i=0;
 		bullet* new_bullet;
-		new_bullet=malloc(sizeof(bullet));
-		new_bullet->pos=pos;
-		new_bullet->next=NULL;
+		/*	find a free slot first: allocating up front leaked the
+			new_bullet whenever every slot was already in use */
 		while(i<MAX_ENEMY_BULLETS){
-			if(enemy_fire[i]==NULL){
-				enemy_fire[i]=new_bullet;
-				return;
-			}
+			if(enemy_fire[i]==NULL)
+				break;
 			i++;
 		}
+		if(i>=MAX_ENEMY_BULLETS)
+			return;		//no free slot, do not fire
+		new_bullet=malloc(sizeof(bullet));
+		if(new_bullet==NULL)
+			return;
+		new_bullet->pos=pos;
+		new_bullet->next=NULL;
+		enemy_fire[i]=new_bullet;
 }
 
 void enemy_weapon_init(){
@@ -642,8 +684,8 @@ void enemy_weapon_init(){
 
 void update_enemy_fire(int target){
 	int i=0;
-	if(enemy_fire[i]==NULL)
-		return;
+	/*	no early return on an empty first slot: later slots may still be
+		in use and need to keep moving */
 	//move each bullet to next position
 	int tmp;
 	while(i<MAX_ENEMY_BULLETS){
@@ -665,21 +707,22 @@ void update_enemy_fire(int target){
 					enemy_fire[i]->pos+=70;
 				}
 			}
-			else enemy_fire[i]->pos+=70;	
+			else enemy_fire[i]->pos+=70;
 		}
-		else break;
+		/*	skip empty slots rather than stopping: the pool is not
+			dense, so breaking here left later bullets frozen in mid-air */
 		i++;
-	}	
-	
+	}
+
 	//check if bullet hit wall
 	i=0;
 	while(i<MAX_ENEMY_BULLETS){
 		if(enemy_fire[i]!=NULL){
 			if(enemy_fire[i]->pos>=PLAYER_STAGE_END_POINT){
+				free(enemy_fire[i]);
 				enemy_fire[i]=NULL;
 			}
 		}
-		else break;
 		i++;
 	}
 	//check if bullet hit target
@@ -687,6 +730,7 @@ void update_enemy_fire(int target){
 	while(i<MAX_ENEMY_BULLETS){
 		if(enemy_fire[i]!=NULL){
 			if(enemy_fire[i]->pos==target-1||enemy_fire[i]->pos==target||enemy_fire[i]->pos==target+1){
+				free(enemy_fire[i]);
 				enemy_fire[i]=NULL;
 				player_hit();
 				freeze_time_ms=0.0;	//start counting as player is frozen
@@ -731,17 +775,23 @@ void enemy_weapon_computer(int target){
 		i++;
 	}
 	if(shooter==NULL){
-		//select a random enemy to fire their weapon
-		int x,t;
-		while(1){
-			t=time(0);
-			srand(t);
-			x=rand()%no_of_enemies;	
+		/*	No enemy is lined up with the player, so pick one at random.
+			srand() belongs in main: re-seeding from time(0) inside this
+			retry loop re-rolled the same value every attempt and made the
+			loop spin when no enemy was available. */
+		int x;
+		int attempts=0;
+		while(attempts<MAX_ENEMIES){
+			x=rand()%MAX_ENEMIES;
 			if(enemy_sprites[x]!=NULL){
 				shooter=enemy_sprites[x];
-				break;		
-			}	
-		}		
+				break;
+			}
+			attempts++;
+		}
+		/*	nothing alive to shoot from */
+		if(shooter==NULL)
+			return;
 	}
 	
 	int weapon_cordinates=shooter->body_pos;
@@ -751,11 +801,18 @@ void enemy_weapon_computer(int target){
 
 void launch_grenade(int pos){
 	grenade=malloc(sizeof(bomb));
-	grenade->pos=pos;	
+	if(grenade==NULL) return;
+	grenade->pos=pos;
 }
 
 void detonate_grenade(){
 		if(grenade==NULL) return;
+		/*	only one shrapnel burst exists at a time; drop any previous
+			one rather than leaking it */
+		if(shrapnel!=NULL){
+			free(shrapnel);
+			shrapnel=NULL;
+		}
 		shrapnel=malloc(sizeof(shrap));
 		shrapnel->shrap1=grenade->pos;
 		shrapnel->shrap2=shrapnel->shrap1-1;
@@ -767,6 +824,7 @@ void detonate_grenade(){
 		shrapnel->shrap8=shrapnel->shrap1+70+1;
 		shrapnel->shrap9=shrapnel->shrap1+70;
 		shrapnel->travel=0;
+		free(grenade);
 		grenade=NULL;
 }
 
@@ -816,6 +874,7 @@ void plot_shrapnel(CHAR_INFO *mirror_screen){
 void update_shrapnel(){
 	if(shrapnel==NULL) return;
 	if(shrapnel->travel==MAX_SHRAPNEL_TRAVEL){
+		free(shrapnel);
 		shrapnel=NULL;
 		return;
 	}
@@ -1053,6 +1112,7 @@ void update_shrapnel(){
 void update_grenade(){
 	if(grenade==NULL) return;
 	if(grenade->pos<=TOP_WALL){
+		free(grenade);
 		grenade=NULL;
 		return;
 	}
@@ -2055,10 +2115,17 @@ void create_enemy_sprite(){
 
 void delete_enemy_sprite(enemy *target){
 	int i=0;
-	while(enemy_sprites[i]!=target){
+	if(target==NULL)
+		return;
+	/*	bounded search: a miss used to walk past the end of the
+		array, so always stop at MAX_ENEMIES */
+	while(i<MAX_ENEMIES&&enemy_sprites[i]!=target){
 		i++;
-	}	
+	}
+	if(i>=MAX_ENEMIES)
+		return;		//not in the array, leave it alone
 	enemy_sprites[i]=NULL;
+	free(target);
 }
 
 void create_bullet_sprite(int pos){
@@ -2084,20 +2151,26 @@ void create_bullet_sprite(int pos){
 
 void delete_bullet_sprite(bullet *round){
 	bullet	*iterator,*temp;
+	if(round==NULL)
+		return;
 	iterator=bullet_sprites;
 	//if first item in list
 	if(iterator==round){
 		bullet_sprites=bullet_sprites->next;
-		//free(iterator);
+		free(iterator);
 		no_of_bullets--;
 		return;
 	}
-	while(iterator!=round){
+	//walk to the node before the one being removed
+	while(iterator!=NULL&&iterator!=round){
 		temp=iterator;
 		iterator=iterator->next;
 	}
+	//not in the list: nothing to unlink
+	if(iterator==NULL)
+		return;
 	temp->next=round->next;
-	//free(round);
+	free(round);
 	no_of_bullets--;
 }
 
@@ -2188,3 +2261,272 @@ void clear(CHAR_INFO *mirror_screen){
 	}
 }
 
+
+/*	==========================================================================
+		AUDIO (MCI / mmsystem)
+
+		Split out at the bottom of this file. Background music and effects
+		are opened as separate MCI devices, each under its own alias:
+
+			bgm    one device, played once and left repeating
+			shot   a small pool of aliases, cycled, so rapid fire overlaps
+			blast  one device for the grenade
+
+		Every call is non-blocking ("wait 0") and every failure is silent:
+		a missing or unreadable file leaves the game running with no sound
+		rather than stalling the loop or stopping the game.
+	========================================================================== */
+
+/*	Number of aliases in the gunshot pool. Shots reuse a device, so a pool
+	is what allows several to sound at once instead of queueing. */
+#define SHOT_POOL_SIZE 6
+
+/*	Appends one line to audio_debug.txt.
+
+		The game repaints the whole console every frame, so anything written
+		to stderr is overwritten within a frame and is effectively invisible.
+		A log file survives the run and can be read afterwards, which is the
+		only practical way to see what MCI actually did. */
+static void audio_log(const char *fmt,...){
+	FILE *fp;
+	va_list ap;
+	fp=fopen("audio_debug.txt","a");
+	if(fp==NULL)
+		return;
+	va_start(ap,fmt);
+	vfprintf(fp,fmt,ap);
+	va_end(ap);
+	fputc('\n',fp);
+	fclose(fp);
+}
+
+/*	Sends one MCI command and logs the result. Returns 0 on success. */
+static MCIERROR mci_send_log(const char *cmd){
+	char buf[128];
+	MCIERROR r;
+	buf[0]='\0';
+	r=mciSendStringA(cmd,buf,sizeof(buf),0);
+	if(r){
+		char err[160];
+		mciGetErrorStringA(r,err,sizeof(err));
+		audio_log("FAIL %-42lu %s | %s",(unsigned long)r,cmd,err);
+	}
+	else{
+		audio_log("  ok %-42s -> %s",cmd,buf);
+	}
+	return r;
+}
+
+static MCIERROR mci_send(const char *cmd){
+	char buf[128];
+	return mciSendStringA(cmd,buf,sizeof(buf),0);
+}
+
+/*	Opens one device. Returns 0 on success; on failure the alias is left
+	empty and the caller carries on without sound. */
+static int audio_open(const char *alias,const char *path){
+	char cmd[256];
+	sprintf(cmd,"open \"%s\" type waveaudio alias %s",path,alias);
+	if(mci_send_log(cmd)!=0)
+		return 0;
+	return 1;
+}
+
+/*	Opens every device and starts the background music.
+
+		Sound is best-effort: any failure leaves audio_available at 0 and
+		the game runs silently. Returns 1 if sound is usable. */
+int audio_init(){
+	char cwd[1024];
+	DWORD n;
+	shot_next=0;
+	bgm_open=0;
+	blast_open=0;
+	audio_available=0;
+
+	/*	start from a clean log each run */
+	fclose(fopen("audio_debug.txt","w"));
+
+	/*	MCI resolves relative paths against the working directory, which is
+		NOT necessarily the folder the exe sits in. Log it, because a
+		wrong working directory is the usual reason the files open fine on
+		one machine and fail on another. */
+	n=GetCurrentDirectoryA(sizeof(cwd),cwd);
+	audio_log("cwd=%s",n?cwd:"<GetCurrentDirectoryA failed>");
+	{
+		char exe[1024];
+		DWORD m=GetModuleFileNameA(0,exe,sizeof(exe));
+		audio_log("exe=%s",m?exe:"<GetModuleFileNameA failed>");
+	}
+	audio_log("--- init ---");
+
+	if(!audio_open("bgm","assets\\background.wav")){
+		/*	background music is not essential, but if it is missing the
+			effects may still be present, so try them anyway */
+	}
+	else{
+		bgm_open=1;
+	}
+
+	int i,shots=0;
+	char alias[16];
+	for(i=0;i<SHOT_POOL_SIZE;i++){
+		sprintf(alias,"shot%d",i);
+		if(audio_open(alias,"assets\\gunshot.wav"))
+			shot_open[i]=1;
+		else
+			shot_open[i]=0;
+		shots+=shot_open[i];
+	}
+
+	if(audio_open("blast","assets\\explode.wav"))
+		blast_open=1;
+
+	if(bgm_open||shots||blast_open)
+		audio_available=1;
+
+	/*	start the music only if it actually opened */
+	if(bgm_open){
+		/*	"repeat" loops the track and "wait 0" keeps the call off this
+			thread. Both are standard MCI, but some drivers reject one or
+			the other, so each form is tried and logged before giving up. */
+		if(mci_send_log("play bgm repeat wait 0")!=0){
+			audio_log("retrying without wait 0");
+			if(mci_send_log("play bgm repeat")!=0){
+				audio_log("retrying without repeat");
+				if(mci_send_log("play bgm wait 0")!=0){
+					/*	last resort: the plain form. This one does block
+						until the track starts, but it is issued once at
+						startup rather than during play */
+					audio_log("retrying plain play");
+					mci_send_log("play bgm");
+				}
+			}
+		}
+	}
+	audio_log("bgm_open=%d audio_available=%d",bgm_open,audio_available);
+	/*	audio_update_bgm() starts the loop from here; tell it the track is
+		already playing so it does not restart it on the first frame */
+	bgm_playing=bgm_open;
+	return audio_available;
+}
+
+/*	Closes every device that was opened. Safe to call when audio_init()
+	was never reached. */
+void audio_shutdown(){
+	int i;
+	char cmd[64];
+	if(bgm_open){
+		mci_send("stop bgm");
+		mci_send("close bgm");
+		bgm_open=0;
+	}
+	if(blast_open){
+		mci_send("stop blast");
+		mci_send("close blast");
+		blast_open=0;
+	}
+	for(i=0;i<SHOT_POOL_SIZE;i++){
+		if(shot_open[i]){
+			sprintf(cmd,"stop shot%d",i);
+			mci_send(cmd);
+			sprintf(cmd,"close shot%d",i);
+			mci_send(cmd);
+			shot_open[i]=0;
+		}
+	}
+	audio_available=0;
+}
+
+/*	Keeps the background track looping.
+
+		The MCI "repeat" modifier is rejected by some drivers (it fails on
+		this setup with error 261), and "status ... current position" is
+		rejected too, so neither can be used here. What does work is
+		"status ... mode", which reports "playing" until the track ends
+		and then "stopped". The loop is driven off that: once the mode is
+		anything other than "playing", the track is restarted.
+
+		Called once per frame from the main loop. */
+void audio_update_bgm(){
+	char buf[64];
+	MCIERROR r;
+
+	if(!bgm_open)
+		return;
+
+	buf[0]='\0';
+	r=mciSendStringA("status bgm mode",buf,sizeof(buf),0);
+
+	/*	a failed status is treated as "keep playing": restarting the track
+		on every frame would make it stutter */
+	if(r!=0)
+		return;
+
+	if(strcmp(buf,"playing")==0){
+		bgm_playing=1;
+		return;
+	}
+
+	/*	reached the end (or was stopped): start it again */
+	if(bgm_playing){
+		audio_log("bgm reached mode=%s, restarting",buf);
+		bgm_playing=0;
+	}
+	mciSendStringA("play bgm from 0",NULL,0,0);
+	bgm_playing=1;
+}
+
+/*	Plays one gunshot.
+
+		Cycles round-robin through the pool so consecutive shots overlap
+		instead of cutting each other off, and uses "wait 0" so a busy
+		device can never stall the game loop. A busy alias simply drops the
+		shot, which is preferable to blocking.
+
+		Returns 1 if a shot was triggered. */
+int audio_play_gunshot(){
+	int i,tries;
+	char cmd[64],buf[64];
+
+	if(!audio_available)
+		return 0;
+
+	for(tries=0;tries<SHOT_POOL_SIZE;tries++){
+		i=shot_next;
+		shot_next=(shot_next+1)%SHOT_POOL_SIZE;
+		if(!shot_open[i])
+			continue;
+
+		/*	Skip aliases that are still sounding. This driver rejects
+			the "wait 0" modifier, so a plain "play" blocks until the
+			device accepts it -- calling it on a busy device is what
+			stalls the game loop. Checking the mode first means we only
+			ever play into an idle device. */
+		sprintf(cmd,"status shot%d mode",i);
+		buf[0]='\0';
+		if(mciSendStringA(cmd,buf,sizeof(buf),0)==0
+			&&strcmp(buf,"playing")==0)
+			continue;		//still audible, try the next alias
+
+		sprintf(cmd,"play shot%d from 0",i);
+		if(mciSendStringA(cmd,NULL,0,0)==0)
+			return 1;
+		/*	play failed even when idle: fall through to the next alias */
+	}
+	return 0;
+}
+
+/*	Plays the explosion. Non-blocking where the driver allows it. */
+int audio_play_explosion(){
+	char buf[64];
+	if(!audio_available||!blast_open)
+		return 0;
+	/*	same busy check as the gunshot: only play into an idle device, so
+		the plain (blocking) play never stalls the loop */
+	buf[0]='\0';
+	if(mciSendStringA("status blast mode",buf,sizeof(buf),0)==0
+		&&strcmp(buf,"playing")==0)
+		return 0;
+	return mciSendStringA("play blast from 0",NULL,0,0)==0;
+}
